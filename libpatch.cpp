@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <fstream>
 #include <sstream>
 #include <iostream>
 

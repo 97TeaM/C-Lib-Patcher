@@ -15,7 +15,7 @@
 *
 * injector.cpp
 * 9/21/2023
-* Updated 9/27/2023
+* Updated 9/28/2023
 */
 
 #include <dlfcn.h>
@@ -100,12 +100,12 @@ int main(int argc, char** argv)
 
         // Usage example
         const char* armWriterCtorSymbol = " _ZN9ArmWriterC2Eij";
-        typedef int (*armWriterCtor)(pid_t, uintptr_t);
+        typedef int (*armWriterCtor)(const char*, const char*);
         armWriterCtor armWriter = reinterpret_cast<armWriterCtor>(dlsym(handle, armWriterCtorSymbol));
         symbolWarn(armWriter, armWriterCtorSymbol);
 
         const char* armReaderCtorSymbol = "_ZN9ArmReaderC2Eij";
-        typedef int (*armReaderCtor)(pid_t, uintptr_t);
+        typedef int (*armReaderCtor)(const char*, const char*);
         armReaderCtor armReader = reinterpret_cast<armReaderCtor>(dlsym(handle, armReaderCtorSymbol));
         symbolWarn(armReader, armReaderCtorSymbol);
 
@@ -113,11 +113,6 @@ int main(int argc, char** argv)
         typedef int (*getAllMapsFunction)(char*, size_t);
         getAllMapsFunction getAllMaps = reinterpret_cast<getAllMapsFunction>(dlsym(handle, getAllMapsSymbol));
         symbolWarn(getAllMaps, getAllMapsSymbol);
-
-        const char* getPidFromPkgNameSymbol = "_Z17getPidFromPkgNamePKc";
-        typedef int (*getPidFromPkgNameFunction)(const char*);
-        getPidFromPkgNameFunction getPidFromPkgName = reinterpret_cast<getPidFromPkgNameFunction>(dlsym(handle, getPidFromPkgNameSymbol));
-        symbolWarn(getPidFromPkgName, getPidFromPkgNameSymbol);
 
         const char* putDwordSymbol = "_ZN9ArmWriter8putDwordEji";
         typedef int (*putByteFunction)(uintptr_t, int32_t);
@@ -129,11 +124,10 @@ int main(int argc, char** argv)
         readStringFunction readString = reinterpret_cast<readStringFunction>(dlsym(handle, readStringSymbol));
         symbolWarn(readString, readStringSymbol);
 
-        pid_t pidof = getPidFromPkgName(target_pkg); // getting pid
-        uintptr_t libBase = 0x00000; // library base address
+        const char* libBase = "libg.so" // library base
 
-        armWriter(pidof, libBase);
-        armReader(pidof, libBase);
+        armWriter(target_pkg, libBase);
+        armReader(target_pkg, libBase);
 
         putDword(libBase + 0x00000 /* your library offset here ... */, 255 /* your patch value here ... */); // patch offset
         readString(libBase + 0x00000 /* your library offset here ... */); // read offset
@@ -146,11 +140,10 @@ int main(int argc, char** argv)
     else if (useDynamicLib == IN_FALSE)
     {
         // Usage example
-        pid_t pidof = getPidFromPkgName(target_pkg); // getting pid
-        uintptr_t libBase = 0x00000; // library base address
+        const char* libBase = "libg.so"; // library base
 
-        ArmWriter writer(pidof, libBase);
-        ArmReader reader(pidof, libBase);
+        ArmWriter writer(target_pkg, libBase);
+        ArmReader reader(target_pkg, libBase);
 
         writer.putDword(libBase + 0x00000 /* your library offset here ... */, 255 /* your patch value here ... */); // patch offset
         reader.readString(libBase + 0x00000 /* your library offset here ... */); // read offset

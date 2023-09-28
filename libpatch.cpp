@@ -55,7 +55,7 @@ vector<unsigned char> buffer;
 *
 * These functions doesnt have class and are partially related to 'ArmWriter' and 'ArmReader' classes */
 
-int getAllMaps(char* buf, size_t bufSize)
+ssize_t getAllMaps(char* buf, size_t bufSize)
 {
     int fd = open("/proc/self/maps", O_RDONLY);
     ssize_t bytesRead = read(fd, buf, bufSize - 1);
@@ -67,25 +67,26 @@ int getAllMaps(char* buf, size_t bufSize)
     return bytesRead;
 }
 
-void getMapByName(const char* lib)
+void getMapByName(const char* libName)
 {
-    char buf[4096];
-    ssize_t bytesRead = getAllMaps(buf, sizeof(buf));
-    char* line = buf;
-    while (*line != '\0')
+    ifstream mapsFile("/proc/self/maps");
+    if (!mapsFile)
     {
-        if (strstr(line, lib) != nullptr)
-        {
-            cout << "[*] Lib loaded in /proc/self/maps" << endl;
-            break;
-        }
-        line = strchr(line, '\n');
-        if (line == nullptr)
-        {
-            break;
-        }
-        line++;
+        cerr << "[!] Failed to open /proc/self/maps" << endl;
+        return;
     }
+    string line;
+    while (getline(mapsFile, line))
+    {
+        if (line.find(libName) != string::npos)
+        {
+            cout << "[*] Library found: " << libName << endl;
+            cout << "[*] Map Line: " << line << endl;
+            return;
+        }
+    }
+
+    cout << "[*] Library not found: " << libName << endl;
 }
 
 void getProcesses()
@@ -94,9 +95,14 @@ void getProcesses()
     dirent* entry;
     while ((entry = readdir(dir)))
     {
-        cout << "[*] Base apk process: " << entry->d_name << endl;
+        if (entry->d_type == DT_DIR)
+        {
+            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
+            {
+                cout << "[*] Base apk process: " << entry->d_name << endl;
+            }
+        }
     }
-    closedir(dir);
 }
 
 int getLoginUid()

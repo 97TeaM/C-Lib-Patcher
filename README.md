@@ -11,7 +11,7 @@ Currently needed only official **LLVM** toolchain from Andoroid NDK, avilable *[
 
 ---
 
-### Injector compilation: ```clang++ -o injector injector.cpp -target armv7a-linux-androideabi19 -static-libstdc++```
+### Injector compilation: ```make```
 
 ---
 

@@ -15,12 +15,13 @@
 *
 * libpatch.cpp
 * 9/14/2023
-* Updated 9/27/2023
+* Updated 9/28/2023
 */
 
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/user.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -39,12 +40,174 @@
 
 using namespace std;
 
+struct user_regs regs;
 vector<unsigned char> buffer;
+
+/* Implement basic functionality:
+* getAllMaps
+* getMapByName
+* getProcesses
+* getLoginUid
+* getPidFromPkgName
+* attachTo
+* detachFrom
+* getLibAddr
+*
+* These functions doesnt have class and are partially related to 'ArmWriter' and 'ArmReader' classes */
+
+int getAllMaps(char* buf, size_t bufSize)
+{
+    int fd = open("/proc/self/maps", O_RDONLY);
+    ssize_t bytesRead = read(fd, buf, bufSize - 1);
+    close(fd);
+
+    if (bytesRead >= 0) {
+        buf[bytesRead] = '\0';
+    }
+    return bytesRead;
+}
+
+void getMapByName(const char* lib)
+{
+    char buf[4096];
+    ssize_t bytesRead = getAllMaps(buf, sizeof(buf));
+    char* line = buf;
+    while (*line != '\0')
+    {
+        if (strstr(line, lib) != nullptr)
+        {
+            cout << "[*] Lib loaded in /proc/self/maps" << endl;
+            break;
+        }
+        line = strchr(line, '\n');
+        if (line == nullptr)
+        {
+            break;
+        }
+        line++;
+    }
+}
+
+void getProcesses()
+{
+    DIR* dir = opendir("/data/app");
+    dirent* entry;
+    while ((entry = readdir(dir)))
+    {
+        cout << "[*] Base apk process: " << entry->d_name << endl;
+    }
+    closedir(dir);
+}
+
+int getLoginUid()
+{
+    int fd = open("/proc/self/loginuid", O_RDONLY);
+    char buf[4096];
+    ssize_t bytesRead = read(fd, buf, sizeof(buf) - 1);
+    buf[bytesRead] = '\0';
+    close(fd);
+    return atoi(buf);
+}
+
+pid_t getPidFromPkgName(const char* PACKAGE)
+{
+    char path[512];
+    DIR* dir = opendir("/proc");
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr)
+    {
+        if (isdigit(*ent->d_name))
+        {
+            snprintf(path, sizeof(path), "/proc/%s/cmdline", ent->d_name);
+            FILE* cmdline = fopen(path, "r");
+            if (cmdline)
+            {
+                char cmdline_content[512];
+                if (fgets(cmdline_content, sizeof(cmdline_content), cmdline))
+                {
+                    cmdline_content[strcspn(cmdline_content, "\n")] = '\0';
+                    if (strcmp(cmdline_content, PACKAGE) == 0)
+                    {
+                        fclose(cmdline);
+                        closedir(dir);
+                        return atoi(ent->d_name);
+                    }
+                }
+                fclose(cmdline);
+            }
+        }
+    }
+    closedir(dir);
+    return -1;
+}
+
+void attachTo(const char* PKG)
+{
+    pid_t PID = getPidFromPkgName(PKG);
+    ptrace(PTRACE_ATTACH, PID, nullptr, nullptr);
+    cout << "[*] Attached to process '" << PKG << "'" << endl;
+    waitpid(PID, nullptr, 0);
+}
+
+void detachFrom(const char* PKG)
+{
+    pid_t PID = getPidFromPkgName(PKG);
+    ptrace(PTRACE_DETACH, PID, nullptr, nullptr);
+    cout << "[*] Detached from process '" << PKG << "'" << endl;
+}
+
+uintptr_t getLibAddr(const char* PKG, const char* lib)
+{
+    pid_t PID = getPidFromPkgName(PKG);
+    uintptr_t libBase = 0;
+    char libPath[512];
+    if (PID != -1)
+    {
+        cout << "[*] Package Name: " << PKG << endl << "[*] PID: " << PID << endl;
+    }
+    else
+    {
+        cout << "[*] Package not found: " << PKG << endl;
+        return 0;
+    }
+
+    attachTo(PKG);
+    memset(libPath, 0, sizeof(libPath));
+    snprintf(libPath, sizeof(libPath), "/proc/%d/maps", PID);
+    FILE* mapsFile = fopen(libPath, "r");
+
+    if (mapsFile)
+    {
+        char line[256];
+        while (fgets(line, sizeof(line), mapsFile))
+        {
+            if (strstr(line, lib))
+            {
+                char* dash = strchr(line, '-');
+                if (dash)
+                {
+                    *dash = '\0';
+                    libBase = strtoull(line, nullptr, 16);
+                    break;
+                }
+            }
+        }
+        fclose(mapsFile);
+    }
+    detachFrom(PKG);
+    return libBase;
+}
+
+/* ArmWriter
+*
+* The library writer-class used for doing static & memory patches
+* Provided high-level patch functions using simple bit manipulations
+* Basically can be used not only for Arm architecture, exeptions are 'putRet', 'putNop' and 'modifyReg' functions which are Arm-only in this case */
 
 class ArmWriter
 {
 public:
-    ArmWriter(pid_t pid, uintptr_t base);
+    ArmWriter(const char* pkg, const char* lib);
 
     void putBytes(uintptr_t offset, const char* bytes);
     void putStaticBytes(const char* libpath, uintptr_t offset, const char* bytes);
@@ -57,14 +220,17 @@ public:
     void putDoubleDword(uintptr_t offset, int32_t loDword, int32_t hiDword);
     void putQword(uintptr_t offset, int64_t val);
     void putString(uintptr_t offset, string s);
+    void modifyReg(const char* PKG, uint32_t arg, uintptr_t val);
     void protect(uintptr_t offset, size_t size, const char* perms);
 private:
     pid_t PID;
     uintptr_t libBase;
 };
 
-ArmWriter::ArmWriter(pid_t pid, uintptr_t base) : PID(pid), libBase(base)
+ArmWriter::ArmWriter(const char* pkg, const char* lib)
 {
+    PID = getPidFromPkgName(pkg);
+    libBase = getLibAddr(pkg, lib);
 }
 
 void ArmWriter::putStaticBytes(const char* libpath, uintptr_t offset, const char* bytes)
@@ -173,6 +339,36 @@ void ArmWriter::putString(uintptr_t offset, string s)
     }
 }
 
+void ArmWriter::modifyReg(const char* PKG, uint32_t arg, uintptr_t val) {
+    pid_t PID = getPidFromPkgName(PKG);
+
+    memset(&regs, 0, sizeof(regs));
+    attachTo(PKG);
+    ptrace(PTRACE_GETREGS, PID, nullptr, &regs);
+
+    /* ARM register names and their usage: http://infocenter.arm.com/help/topic/com.arm.doc.dui0489e/DUI0489E_aapcs.pdf
+     * Modify the appropriate ARM register based on the argument index */
+    switch (arg) {
+        case 0:
+            regs.uregs[0] = val; // r0
+            break;
+        case 1:
+            regs.uregs[1] = val; // r1
+            break;
+        case 2:
+            regs.uregs[2] = val; // r2
+            break;
+        case 3:
+            regs.uregs[3] = val; // r3
+            break;
+        default:
+            cerr << "[!] Argument index out of range" << endl;
+            break;
+    }
+    ptrace(PTRACE_SETREGS, PID, nullptr, &regs);
+    detachFrom(PKG);
+}
+
 void ArmWriter::protect(uintptr_t offset, size_t size, const char* perms)
 {
     int prot = 0;
@@ -200,10 +396,16 @@ void ArmWriter::protect(uintptr_t offset, size_t size, const char* perms)
     mprotect((void*)offset, size, prot);
 }
 
+/* ArmReader
+*
+* The library reader-class used for reading memory data
+* Provided high-level read functions using simple bit manipulations
+* Basically can be used not only for Arm architecture */
+
 class ArmReader
 {
 public:
-    ArmReader(pid_t pid, uintptr_t base);
+    ArmReader(const char* pkg, const char* lib);
 
     uint8_t readByte(uintptr_t offset);
     int16_t readWord(uintptr_t offset);
@@ -218,8 +420,10 @@ private:
     uintptr_t libBase;
 };
 
-ArmReader::ArmReader(pid_t pid, uintptr_t base) : PID(pid), libBase(base)
+ArmReader::ArmReader(const char* pkg, const char* lib)
 {
+    PID = getPidFromPkgName(pkg);
+    libBase = getLibAddr(pkg, lib);
 }
 
 uint8_t ArmReader::readByte(uintptr_t offset)
@@ -302,137 +506,4 @@ string ArmReader::readString(uintptr_t offset)
     }
     delete[] buffer;
     return oss.str();
-}
-
-int getAllMaps(char* buf, size_t bufSize)
-{
-    int fd = open("/proc/self/maps", O_RDONLY);
-    ssize_t bytesRead = read(fd, buf, bufSize - 1);
-    close(fd);
-
-    if (bytesRead >= 0) {
-        buf[bytesRead] = '\0';
-    }
-    return bytesRead;
-}
-
-void getMapByName(const char* lib)
-{
-    char buf[4096];
-    ssize_t bytesRead = getAllMaps(buf, sizeof(buf));
-    char* line = buf;
-    while (*line != '\0')
-    {
-        if (strstr(line, lib) != nullptr)
-        {
-            cout << "[*] Lib loaded in /proc/self/maps" << endl;
-            break;
-        }
-        line = strchr(line, '\n');
-        if (line == nullptr)
-        {
-            break;
-        }
-        line++;
-    }
-}
-
-void getProcesses()
-{
-    DIR* dir = opendir("/data/app");
-    dirent* entry;
-    while ((entry = readdir(dir)))
-    {
-        cout << "[*] Base apk process: " << entry->d_name << endl;
-    }
-    closedir(dir);
-}
-
-int getLoginUid()
-{
-    int fd = open("/proc/self/loginuid", O_RDONLY);
-    char buf[4096];
-    ssize_t bytesRead = read(fd, buf, sizeof(buf) - 1);
-    buf[bytesRead] = '\0';
-    close(fd);
-    return atoi(buf);
-}
-
-int getPidFromPkgName(const char* PACKAGE)
-{
-    char path[512];
-    DIR* dir = opendir("/proc");
-    struct dirent* ent;
-    while ((ent = readdir(dir)) != nullptr)
-    {
-        if (isdigit(*ent->d_name))
-        {
-            snprintf(path, sizeof(path), "/proc/%s/cmdline", ent->d_name);
-            FILE* cmdline = fopen(path, "r");
-            if (cmdline)
-            {
-                char cmdline_content[512];
-                if (fgets(cmdline_content, sizeof(cmdline_content), cmdline))
-                {
-                    cmdline_content[strcspn(cmdline_content, "\n")] = '\0';
-                    if (strcmp(cmdline_content, PACKAGE) == 0)
-                    {
-                        fclose(cmdline);
-                        closedir(dir);
-                        return atoi(ent->d_name);
-                    }
-                }
-                fclose(cmdline);
-            }
-        }
-    }
-    closedir(dir);
-    return -1;
-}
-
-int attachTo(const char* PKG, const char* baselib)
-{
-    int PID = getPidFromPkgName(PKG);
-    uintptr_t libBase = 0;
-    char libPath[512];
-    if (PID != -1)
-    {
-        cout << "[*] Package Name: " << PKG << endl << "[*] PID: " << PID << endl;
-    }
-    else
-    {
-        cout << "[*] Package not found: " << PKG << endl;
-    }
-    ptrace(PTRACE_ATTACH, PID, nullptr, nullptr);
-    cout << "[*] Attached to process " << PKG << endl;
-    waitpid(PID, nullptr, 0);
-    memset(libPath, 0, sizeof(libPath));
-    snprintf(libPath, sizeof(libPath), "/proc/self/maps");
-    FILE* mapsFile = fopen(libPath, "r");
-    if (mapsFile)
-    {
-        char line[256];
-        while (fgets(line, sizeof(line), mapsFile))
-        {
-            if (strstr(line, baselib))
-            {
-                char* dash = strchr(line, '-');
-                if (dash)
-                {
-                    *dash = '\0';
-                    libBase = strtoull(line, nullptr, 16);
-                    break;
-                }
-            }
-        }
-        fclose(mapsFile);
-    }
-    return PID;
-}
-
-int detachFrom(int PID)
-{
-    ptrace(PTRACE_DETACH, PID, nullptr, nullptr);
-    cout << "[*] Detached from process" << endl;
-    return 0;
 }

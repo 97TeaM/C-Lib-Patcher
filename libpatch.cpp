@@ -317,10 +317,10 @@ void ArmWriter::putLittleDword(uintptr_t offset, int32_t val) // little-endian b
     putBytes(offset, (const char*)buffer.data());
 }
 
-void ArmWriter::putDoubleDword(uintptr_t offset, int32_t loDword, int32_t hiDword) // 2-int long, in right 4 bits we put high word, in left 4 bits we put low word
+void ArmWriter::putDoubleDword(uintptr_t offset, int32_t hiDword, int32_t loDword) // 2-int long, in right 4 bits we put high word, in left 4 bits we put low word
 {
-    putDword(offset, loDword);
-    putDword(offset, hiDword + 4); // goto 4 left bits
+    putDword(offset, hiDword);
+    putDword(offset, loDword + 4); // goto 4 left bits
     putBytes(offset, (const char*)buffer.data());
 }
 
@@ -474,9 +474,9 @@ int32_t ArmReader::readLittleDword(uintptr_t offset) // little-endian bytes orde
 
 pair<int32_t, int32_t> ArmReader::readDoubleDword(uintptr_t offset) // 2-int long, from right 4 bits we read high word, from left 4 bits we read low wor
 {
-    int32_t loDword = ArmReader::readDword(offset);
-    int32_t hiDword = ArmReader::readDword(offset + 4); // goto 4 left bits
-    return make_pair(hiDword, loDword);
+    int32_t hiDword = ArmReader::readDword(offset);
+    int32_t loDword = ArmReader::readDword(offset + 4); // goto 4 left bits
+    return make_pair(loDword, hiDword);
 }
 
 int64_t ArmReader::readQword(uintptr_t offset)

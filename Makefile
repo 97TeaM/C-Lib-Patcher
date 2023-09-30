@@ -11,6 +11,6 @@ $(OUTPUT): $(SRC_FILES)
 	$(CXX) -o $@ $^ $(CXXFLAGS)
 
 clean:
-	rm -f ./$(BUILD_DIR)
+	rm -rf ./$(BUILD_DIR)
 
 .PHONY: all clean

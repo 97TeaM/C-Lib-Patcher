@@ -15,7 +15,7 @@
 *
 * libpatch.cpp
 * 9/14/2023
-* Updated 9/28/2023
+* Updated 9/30/2023
 */
 
 #include <fcntl.h>
@@ -240,9 +240,9 @@ ArmWriter::ArmWriter(const char* pkg, const char* lib)
     libBase = getLibAddr(pkg, lib);
 }
 
-void ArmWriter::putStaticBytes(const char* libpath, uintptr_t offset, const char* bytes)
+void ArmWriter::putStaticBytes(const char* path, uintptr_t offset, const char* bytes)
 {
-    int fd = open(libpath, O_RDWR);
+    int fd = open(path, O_RDWR);
     struct stat libstat;
     fstat(fd, &libstat);
     void* mappaddr = mmap(NULL, libstat.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -266,11 +266,12 @@ void ArmWriter::putStaticBytes(const char* libpath, uintptr_t offset, const char
     close(fd);
 }
 
-void ArmWriter::putBytes(uintptr_t offset, const char* bytes)
+void ArmWriter::putBytes(uintptr_t offset, const char* bytes, size_t size)
 {
     uintptr_t patchAddress = libBase + offset;
-    ptrace(PTRACE_POKETEXT, PID, (void*)patchAddress, (void*)strtoul(bytes, NULL, 16));
-    buffer.clear(); // Clear the vector buffer
+    for (size_t i = 0; i < size; ++i) {
+        ptrace(PTRACE_POKETEXT, PID, (void*)patchAddress + i, (void*)bytes[i]);
+    }
 }
 
 void ArmWriter::putRet(uintptr_t offset)
@@ -296,7 +297,7 @@ void ArmWriter::putWord(uintptr_t offset, int16_t val)
 		int16_t word = (val >> (i * 8)) & 0xFF;
 		buffer.push_back(word);
 	}
-    putBytes(offset, (const char*)buffer.data());
+    putBytes(offset, (const char*)buffer.data(), buffer.size());
 }
 
 void ArmWriter::putDword(uintptr_t offset, int32_t val)
@@ -305,7 +306,7 @@ void ArmWriter::putDword(uintptr_t offset, int32_t val)
 		int dword = (val >> (i * 8)) & 0xFF;
 		buffer.push_back(dword);
 	}
-    putBytes(offset, (const char*)buffer.data());
+    putBytes(offset, (const char*)buffer.data(), buffer.size());
 }
 
 void ArmWriter::putLittleDword(uintptr_t offset, int32_t val) // little-endian bytes order
@@ -314,14 +315,14 @@ void ArmWriter::putLittleDword(uintptr_t offset, int32_t val) // little-endian b
 		int32_t dword = (val >> (i * 8)) & 0xFF;
 		buffer.push_back(dword);
 	}
-    putBytes(offset, (const char*)buffer.data());
+    putBytes(offset, (const char*)buffer.data(), buffer.size());
 }
 
 void ArmWriter::putDoubleDword(uintptr_t offset, int32_t hiDword, int32_t loDword) // 2-int long, in right 4 bits we put high word, in left 4 bits we put low word
 {
     putDword(offset, hiDword);
     putDword(offset, loDword + 4); // goto 4 left bits
-    putBytes(offset, (const char*)buffer.data());
+    putBytes(offset, (const char*)buffer.data(), buffer.size());
 }
 
 void ArmWriter::putQword(uintptr_t offset, int64_t val)
@@ -330,7 +331,7 @@ void ArmWriter::putQword(uintptr_t offset, int64_t val)
 		int64_t qword = (val >> (i * 8)) & 0xFF;
 		buffer.push_back(qword);
 	}
-    putBytes(offset, (const char*)buffer.data());
+    putBytes(offset, (const char*)buffer.data(), buffer.size());
 }
 
 void ArmWriter::putString(uintptr_t offset, string s)
@@ -342,7 +343,7 @@ void ArmWriter::putString(uintptr_t offset, string s)
             buffer.push_back(c);
         }
         buffer.push_back('\0');
-        putBytes(offset, (const char*)buffer.data());
+        putBytes(offset, (const char*)buffer.data(), buffer.size());
     }
 }
 
@@ -445,7 +446,7 @@ int16_t ArmReader::readWord(uintptr_t offset)
 
     for (int i = 0; i <= 1; i++)
     {
-        word |= (readByte(offset) << (8 * (3 - i)));
+        word |= (readByte(offset) << (8 * (1 - i)));
     }
     return word;
 }
@@ -485,7 +486,7 @@ int64_t ArmReader::readQword(uintptr_t offset)
 
     for (int i = 0; i <= 7; i++)
     {
-        qword |= (readByte(offset) << (8 * (3 - i)));
+        qword |= (readByte(offset) << (8 * (7 - i)));
     }
     return qword;
 }

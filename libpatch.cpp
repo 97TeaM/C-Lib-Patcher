@@ -216,7 +216,7 @@ class ArmWriter
 public:
     ArmWriter(const char* pkg, const char* lib);
 
-    void putBytes(uintptr_t offset, const char* bytes);
+    void putBytes(uintptr_t offset, const char* bytes, size_t size);
     void putStaticBytes(const char* libpath, uintptr_t offset, const char* bytes);
     void putRet(uintptr_t offset);
     void putNop(uintptr_t offset);
@@ -270,25 +270,25 @@ void ArmWriter::putBytes(uintptr_t offset, const char* bytes, size_t size)
 {
     uintptr_t patchAddress = libBase + offset;
     for (size_t i = 0; i < size; ++i) {
-        ptrace(PTRACE_POKETEXT, PID, (void*)patchAddress + i, (void*)bytes[i]);
+        ptrace(PTRACE_POKETEXT, PID, (void*)(patchAddress + i), (void*)((uintptr_t)bytes[i]));
     }
 }
 
 void ArmWriter::putRet(uintptr_t offset)
 {
-    putBytes(offset, "1E FF 2F E1"); // BX LR (Arm)
+    putBytes(offset, "1E FF 2F E1", 4); // BX LR (Arm)
 }
 
 void ArmWriter::putNop(uintptr_t offset)
 {
-    putBytes(offset, "00 00 00 EA"); // NOP (Arm)
+    putBytes(offset, "00 00 00 EA", 4); // NOP (Arm)
 }
 
 void ArmWriter::putByte(uintptr_t offset, uint8_t val)
 {
 	uint8_t byte = val;
 	buffer.push_back(byte);
-    putBytes(offset, (const char*)buffer.data());
+    putBytes(offset, (const char*)buffer.data(), buffer.size());
 }
 
 void ArmWriter::putWord(uintptr_t offset, int16_t val)
